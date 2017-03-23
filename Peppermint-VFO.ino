@@ -254,7 +254,7 @@ unsigned long readFreq(byte* cmd) {
       (unsigned long)d5 * 1000000L + 
       (unsigned long)d4 * 100000L + 
       (unsigned long)d3 * 10000L + 
-      (unsigned long)d2 * 0000L + 
+      (unsigned long)d2 * 1000L + 
       (unsigned long)d1 * 100L + 
       (unsigned long)d0 * 10L; 
 }
