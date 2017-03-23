@@ -5,7 +5,6 @@
 #include "Wire.h"
 #include <SPI.h>
 #include <Adafruit_SSD1306.h>
-
 #include <ClickEncoder.h>
 #include <TimerOne.h>
 
@@ -14,10 +13,6 @@ Adafruit_SSD1306 display(4);
 Si5351 si5351;
 
 ClickEncoder encoder(3,2,4,4);
-
-void serviceCb() {
-  encoder.service();
-}
 
 // ----- FREQUENCY STEP MENU ---------------------------------------------------------------
 
@@ -73,6 +68,10 @@ long lastSerialReadStamp = 0;
 byte cmdBuf[5];
 int cmdBufPtr = 0;
 
+void serviceCb() {
+  encoder.service();
+}
+
 void setup() {
 
   pinMode(13,OUTPUT);
@@ -99,12 +98,15 @@ void updateDisplayFreq(unsigned long freq) {
   unsigned long f0 = f / 1000000;
   unsigned long f1 = (f - (f0 * 1000000)) / 1000;
   unsigned long f2 = f - f0 * 1000000 - f1 * 1000;
+  char buf[10];
   display.setCursor(10,20);
   display.print(f0);
   display.setCursor(30,20);
-  display.print(f1);
+  sprintf(buf,"%03d",f1);
+  display.print(buf);
   display.setCursor(70,20);
-  display.print(f2);
+  sprintf(buf,"%03d",f2);  
+  display.print(buf);
 }
 
 void updateDisplay() {
@@ -215,24 +217,26 @@ void getDecimalDigits(unsigned long number,byte* result,int digits) {
 // Takes a frequency and writes it into the CAT command buffer in BCD form.
 //
 void writeFreq(unsigned long freq,byte* cmd) {
-  byte digits[8];
-  // Convert the frequency to a set of decimal digits
-  getDecimalDigits(freq,digits,8);
-  // Start from the LSB 
-  cmd[3] = setLowNibble(cmd[3],digits[0]);
-  cmd[3] = setHighNibble(cmd[3],digits[1]);
-  cmd[2] = setLowNibble(cmd[2],digits[2]);
-  cmd[2] = setHighNibble(cmd[2],digits[3]);
-  cmd[1] = setLowNibble(cmd[1],digits[4]);
-  cmd[1] = setHighNibble(cmd[1],digits[5]);
-  cmd[0] = setLowNibble(cmd[0],digits[6]);
-  cmd[0] = setHighNibble(cmd[0],digits[7]);  
+  // Convert the frequency to a set of decimal digits. We are taking 9 digits
+  // so that we can get up to 999 MHz. But the protocol doesn't care about the
+  // LSD (1's place), so we ignore that digit.
+  byte digits[9];
+  getDecimalDigits(freq,digits,9);
+  // Start from the LSB and get each nibble 
+  cmd[3] = setLowNibble(cmd[3],digits[1]);
+  cmd[3] = setHighNibble(cmd[3],digits[2]);
+  cmd[2] = setLowNibble(cmd[2],digits[3]);
+  cmd[2] = setHighNibble(cmd[2],digits[4]);
+  cmd[1] = setLowNibble(cmd[1],digits[5]);
+  cmd[1] = setHighNibble(cmd[1],digits[6]);
+  cmd[0] = setLowNibble(cmd[0],digits[7]);
+  cmd[0] = setHighNibble(cmd[0],digits[8]);  
 }
 
 // This function takes a frquency that is encoded using 4 bytes of BCD
 // representation and turns it into an long measured in Hz.
 //
-// [12][34][56][78] = 123.45678 Mhz
+// [12][34][56][78] = 123.45678? Mhz
 //
 unsigned long readFreq(byte* cmd) {
     // Pull off each of the digits
@@ -255,8 +259,9 @@ unsigned long readFreq(byte* cmd) {
       (unsigned long)d0 * 10L; 
 }
 
+// This is where the commands are handled
+//
 void processCATCommand(byte* cmd) {
-
   // Set frequency
   if (cmd[4] == 0x01) {
     unsigned long freq = readFreq(cmd); 
@@ -323,7 +328,7 @@ void processCATCommand(byte* cmd) {
 }
 
 void loop() {
-
+  
   // Serial (CAT) interface
   if (Serial.available()) {
     if ((millis() - lastSerialReadStamp) > 500) {
