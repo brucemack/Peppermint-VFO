@@ -19,14 +19,8 @@ void serviceCb() {
   encoder.service();
 }
 
-// The frequency that is displayed 
-unsigned long displayFreq = 7200000L;
-// The IF frequency 
-unsigned long ifFreq = 12000000L;
-// The adjustment
-unsigned long adjFreq = 1600L;
-
 // ----- FREQUENCY STEP MENU ---------------------------------------------------------------
+
 const unsigned int freqStepMenuSize = 7;
 
 const long long freqStepMenu[freqStepMenuSize] = {
@@ -61,13 +55,27 @@ const char* modeMenuText[] = {
   "CAL"
 };
 
+// The frequency that is displayed 
+unsigned long displayFreq = 7200000L;
+// The IF frequency 
+const unsigned long ifFreq = 12000000L;
+// The adjustment
+unsigned long adjFreq = 1600L;
+// Menu mode
 unsigned int mode = 0;
 unsigned int subMode = 0;
-
+// Indicates that we need to refresh the display
 bool displayDirty = true;
 unsigned long lastDisplayStamp = 0;
+bool keyed = false;
+
+long lastSerialReadStamp = 0;
+byte cmdBuf[5];
+int cmdBufPtr = 0;
 
 void setup() {
+
+  pinMode(13,OUTPUT);
   
   Serial.begin(9600);
  
@@ -82,9 +90,8 @@ void setup() {
   Timer1.initialize(1000);
   Timer1.attachInterrupt(serviceCb); 
 
-  setFreq(displayFreq);
-
-  pinMode(13,OUTPUT);
+  // Initial setting
+  setFreq(7200000L);
 }
 
 void updateDisplayFreq(unsigned long freq) {
@@ -108,7 +115,7 @@ void updateDisplay() {
   // Top line - logo and mode
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("KC1FSZ VFO 4 CAT");
+  display.print("KC1FSZ VFO 5");
   display.setCursor(100,0);
   display.print(modeMenuText[mode]);
 
@@ -164,32 +171,80 @@ void updateDisplay() {
   display.display();
 }
 
-void setFreq(unsigned long displayFreq) {
+void setFreq(unsigned long freq) {
+  displayFreq = freq;
   unsigned long a = ifFreq - (displayFreq + adjFreq);
   si5351.set_freq(a * 100,SI5351_PLL_FIXED, SI5351_CLK0);
+  displayDirty = true;  
 }
 
-byte highNibble(byte b) {
+byte setHighNibble(byte b,byte v) {
+  // Clear the high nibble
+  b &= 0x0f;
+  // Set the high nibble
+  return b | ((v & 0x0f) << 4);
+}
+
+byte setLowNibble(byte b,byte v) {
+  // Clear the low nibble
+  b &= 0xf0;
+  // Set the high nibble
+  return b | (v & 0x0f);
+}
+
+byte getHighNibble(byte b) {
   return (b >> 4) & 0x0f;
 }
 
-byte lowNibble(byte b) {
+byte getLowNibble(byte b) {
   return b & 0x0f;
 }
 
-void processCATCommand(byte* cmd) {
-  // Set frequency
-  if (cmd[4] == 1) {
+// Takes a number an produces the requested number of decimal digits, staring
+// from the least significant digit.  
+//
+void getDecimalDigits(unsigned long number,byte* result,int digits) {
+  for (int i = 0; i < digits; i++) {
+    // "Mask off" (in a decimal sense) the LSD and return it
+    result[i] = number % 10;
+    // "Shift right" (in a decimal sense)
+    number /= 10;
+  }
+}
+
+// Takes a frequency and writes it into the CAT command buffer in BCD form.
+//
+void writeFreq(unsigned long freq,byte* cmd) {
+  byte digits[8];
+  // Convert the frequency to a set of decimal digits
+  getDecimalDigits(freq,digits,8);
+  // Start from the LSB 
+  cmd[3] = setLowNibble(cmd[3],digits[0]);
+  cmd[3] = setHighNibble(cmd[3],digits[1]);
+  cmd[2] = setLowNibble(cmd[2],digits[2]);
+  cmd[2] = setHighNibble(cmd[2],digits[3]);
+  cmd[1] = setLowNibble(cmd[1],digits[4]);
+  cmd[1] = setHighNibble(cmd[1],digits[5]);
+  cmd[0] = setLowNibble(cmd[0],digits[6]);
+  cmd[0] = setHighNibble(cmd[0],digits[7]);  
+}
+
+// This function takes a frquency that is encoded using 4 bytes of BCD
+// representation and turns it into an long measured in Hz.
+//
+// [12][34][56][78] = 123.45678 Mhz
+//
+unsigned long readFreq(byte* cmd) {
     // Pull off each of the digits
-    byte d7 = highNibble(cmd[0]);
-    byte d6 = lowNibble(cmd[0]);
-    byte d5 = highNibble(cmd[1]);
-    byte d4 = lowNibble(cmd[1]); 
-    byte d3 = highNibble(cmd[2]);
-    byte d2 = lowNibble(cmd[2]); 
-    byte d1 = highNibble(cmd[3]);
-    byte d0 = lowNibble(cmd[3]); 
-    unsigned long freq = 
+    byte d7 = getHighNibble(cmd[0]);
+    byte d6 = getLowNibble(cmd[0]);
+    byte d5 = getHighNibble(cmd[1]);
+    byte d4 = getLowNibble(cmd[1]); 
+    byte d3 = getHighNibble(cmd[2]);
+    byte d2 = getLowNibble(cmd[2]); 
+    byte d1 = getHighNibble(cmd[3]);
+    byte d0 = getLowNibble(cmd[3]); 
+    return  
       (unsigned long)d7 * 100000000L +
       (unsigned long)d6 * 10000000L +
       (unsigned long)d5 * 1000000L + 
@@ -198,22 +253,74 @@ void processCATCommand(byte* cmd) {
       (unsigned long)d2 * 0000L + 
       (unsigned long)d1 * 100L + 
       (unsigned long)d0 * 10L; 
-    displayFreq = freq;
-    setFreq(freq);       
-    displayDirty = true;
-  }
-  else if (cmd[4] == 8) {
-    digitalWrite(13,HIGH);
-  }
-  else if (cmd[4] == 88) {
-    digitalWrite(13,LOW);
-  }
 }
 
+void processCATCommand(byte* cmd) {
 
-long lastSerialReadStamp = 0;
-byte cmdBuf[5];
-int cmdBufPtr = 0;
+  // Set frequency
+  if (cmd[4] == 0x01) {
+    unsigned long freq = readFreq(cmd); 
+    setFreq(freq);       
+  }
+  // Get frequency
+  else if (cmd[4] == 0x03) {
+    byte resBuf[5];
+    // Put the frequency into the buffer
+    writeFreq(displayFreq,resBuf);
+    // Put the mode into the buffer
+    resBuf[4] = 0x00;
+    Serial.write(resBuf,5);
+  }
+  // PTT On
+  else if (cmd[4] == 0x08) {
+    byte resBuf[0];
+    if (!keyed) {
+      resBuf[0] = 0;
+    } else {
+      resBuf[0] = 0xf0;
+    }
+    Serial.write(resBuf,1);
+    keyed = true;
+    digitalWrite(13,HIGH);
+  }
+  // Read TX keyed state
+  else if (cmd[4] == 0x10) {
+    byte resBuf[0];
+    if (!keyed) {
+      resBuf[0] = 0;
+    } else {
+      resBuf[0] = 0xf0;
+    }
+    Serial.write(resBuf,1);
+  }
+  // PTT Off
+  else if (cmd[4] == 0x88) {
+    byte resBuf[0];
+    if (keyed) {
+      resBuf[0] = 0;
+    } else {
+      resBuf[0] = 0xf0;
+    }
+    Serial.write(resBuf,1);
+    keyed = false;
+    digitalWrite(13,LOW);
+  }
+  // Read receiver status
+  else if (cmd[4] == 0xe7) {
+    byte resBuf[0];
+    resBuf[0] = 0x09;
+    Serial.write(resBuf,1);
+  }  
+  // Read receiver status
+  else if (cmd[4] == 0xf7) {
+    byte resBuf[0];
+    resBuf[0] = 0x00;
+    if (keyed) {
+      resBuf[0] = resBuf[0] | 0xf0;
+    }
+    Serial.write(resBuf,1);
+  }
+}
 
 void loop() {
 
@@ -247,9 +354,9 @@ void loop() {
     if (subMode == 0) {
       // Adjust the frequency by the selected step size
       if (value != 0) {
-        displayFreq -= (unsigned long long)value * freqStepMenu[freqStepIndex];
-        displayDirty = true;
-        setFreq(displayFreq);
+        unsigned long f = displayFreq -
+          (unsigned long long)value * freqStepMenu[freqStepIndex];
+        setFreq(f);
       }
     } else if (subMode == 1) {
       if (value != 0) {
@@ -265,12 +372,12 @@ void loop() {
     }
   
     if (button == 5) {
-      displayDirty = true;
       if (subMode == 0) {
         subMode = 1;
       } else {
         subMode = 0;
       }
+      displayDirty = true;
     } else if (button == 6) {
       mode++;
       if (mode >= modeMenuSize) {
@@ -286,7 +393,6 @@ void loop() {
       // Adjust the frequency by the selected step size
       if (value != 0) {
         adjFreq -= (unsigned long long)value * freqStepMenu[freqStepIndex];
-        displayDirty = true;
         setFreq(displayFreq);
       }
     } else if (subMode == 1) {
@@ -303,12 +409,12 @@ void loop() {
     }
   
     if (button == 5) {
-      displayDirty = true;
       if (subMode == 0) {
         subMode = 1;
       } else {
         subMode = 0;
       }
+      displayDirty = true;
     } else if (button == 6) {
       mode++;
       if (mode >= modeMenuSize) {
