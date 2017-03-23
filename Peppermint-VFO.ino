@@ -108,7 +108,7 @@ void updateDisplay() {
   // Top line - logo and mode
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("KC1FSZ VFO 3");
+  display.print("KC1FSZ VFO 4 CAT");
   display.setCursor(100,0);
   display.print(modeMenuText[mode]);
 
@@ -198,7 +198,9 @@ void processCATCommand(byte* cmd) {
       (unsigned long)d2 * 0000L + 
       (unsigned long)d1 * 100L + 
       (unsigned long)d0 * 10L; 
+    displayFreq = freq;
     setFreq(freq);       
+    displayDirty = true;
   }
   else if (cmd[4] == 8) {
     digitalWrite(13,HIGH);
@@ -217,10 +219,11 @@ void loop() {
 
   // Serial (CAT) interface
   if (Serial.available()) {
-    if (millis() - lastSerialReadStamp > 500) {
+    if ((millis() - lastSerialReadStamp) > 500) {
       cmdBufPtr = 0;
     }
     cmdBuf[cmdBufPtr++] = Serial.read();
+    lastSerialReadStamp = millis();
     // Check to see if we have a full read
     if (cmdBufPtr == 5) {
       processCATCommand(cmdBuf);
