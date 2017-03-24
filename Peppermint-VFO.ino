@@ -1,5 +1,12 @@
-// BITX40 VFO
+// The Peppermint Bark BITX40 VFO
 // Bruce MacKinnon KC1FSZ 22-March-2017
+// See https://www.qrz.com/db/KC1FSZ
+//
+// This code allows the radio to emulate an FT-817.  I chose this radio 
+// because it is fairly basic and the command protocol is well documented
+// here: http://www.ka7oei.com/ft817_meow.html.
+//
+// Set your CAT software to 9600,N,8,1
 //
 #include "si5351.h"
 #include "Wire.h"
@@ -8,11 +15,16 @@
 #include <ClickEncoder.h>
 #include <TimerOne.h>
 
+#define ENCODER_LEFT 3
+#define ENCODER_RIGHT 2
+#define ENCODER_PUSH 4
+
+// Connection to OLED controller
 Adafruit_SSD1306 display(4);
-
+// Connection to PLL synthesizer
 Si5351 si5351;
-
-ClickEncoder encoder(3,2,4,4);
+// Connection to rotary encoder
+ClickEncoder encoder(ENCODER_LEFT,ENCODER_RIGHT,ENCODER_PUSH,4);
 
 // ----- FREQUENCY STEP MENU ---------------------------------------------------------------
 
@@ -54,7 +66,7 @@ const char* modeMenuText[] = {
 unsigned long displayFreq = 7200000L;
 // The IF frequency 
 const unsigned long ifFreq = 12000000L;
-// The adjustment
+// The adjustment (calibration)
 unsigned long adjFreq = 1600L;
 // Menu mode
 unsigned int mode = 0;
@@ -62,18 +74,22 @@ unsigned int subMode = 0;
 // Indicates that we need to refresh the display
 bool displayDirty = true;
 unsigned long lastDisplayStamp = 0;
+// NOT IMPLEMENTED YET
 bool keyed = false;
 
 long lastSerialReadStamp = 0;
 byte cmdBuf[5];
 int cmdBufPtr = 0;
 
+// This is used by the hardware timer to manage timing of the rotary 
+// encoder.
 void serviceCb() {
   encoder.service();
 }
 
 void setup() {
 
+  // Diagnostic LED
   pinMode(13,OUTPUT);
   
   Serial.begin(9600);
@@ -81,8 +97,7 @@ void setup() {
   si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0);
   si5351.set_pll(SI5351_PLL_FIXED, SI5351_PLLA);  
 
-  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-  // initialize with the I2C addr (for the 128x64)
+  // Initialize with the I2C addr (for the 128x64)
   display.begin(SSD1306_SWITCHCAPVCC,0x3C);
   display.clearDisplay();
 
@@ -93,6 +108,7 @@ void setup() {
   setFreq(7200000L);
 }
 
+// Draws the frequency line on the display
 void updateDisplayFreq(unsigned long freq) {
   unsigned long f = freq;
   unsigned long f0 = f / 1000000;
@@ -109,6 +125,7 @@ void updateDisplayFreq(unsigned long freq) {
   display.print(buf);
 }
 
+// This does the rendering of the display
 void updateDisplay() {
 
   display.clearDisplay();
@@ -117,7 +134,7 @@ void updateDisplay() {
   // Top line - logo and mode
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("KC1FSZ VFO 5");
+  display.print("KC1FSZ VFO v5");
   display.setCursor(100,0);
   display.print(modeMenuText[mode]);
 
@@ -173,6 +190,7 @@ void updateDisplay() {
   display.display();
 }
 
+// This function sets (and remembers) the VFO frequency
 void setFreq(unsigned long freq) {
   displayFreq = freq;
   unsigned long a = ifFreq - (displayFreq + adjFreq);
@@ -180,6 +198,9 @@ void setFreq(unsigned long freq) {
   displayDirty = true;  
 }
 
+// The next 4 functions are needed to implement the CAT protocol, which
+// uses 4-bit BCD formatting.
+//
 byte setHighNibble(byte b,byte v) {
   // Clear the high nibble
   b &= 0x0f;
@@ -190,7 +211,7 @@ byte setHighNibble(byte b,byte v) {
 byte setLowNibble(byte b,byte v) {
   // Clear the low nibble
   b &= 0xf0;
-  // Set the high nibble
+  // Set the low nibble
   return b | (v & 0x0f);
 }
 
@@ -202,7 +223,7 @@ byte getLowNibble(byte b) {
   return b & 0x0f;
 }
 
-// Takes a number an produces the requested number of decimal digits, staring
+// Takes a number and produces the requested number of decimal digits, staring
 // from the least significant digit.  
 //
 void getDecimalDigits(unsigned long number,byte* result,int digits) {
@@ -259,7 +280,7 @@ unsigned long readFreq(byte* cmd) {
       (unsigned long)d0 * 10L; 
 }
 
-// This is where the commands are handled
+// This is where the CAT commands are actually handled
 //
 void processCATCommand(byte* cmd) {
   // Set frequency
@@ -329,7 +350,7 @@ void processCATCommand(byte* cmd) {
 
 void loop() {
   
-  // Serial (CAT) interface
+  // Service serial (CAT) interface
   if (Serial.available()) {
     if ((millis() - lastSerialReadStamp) > 500) {
       cmdBufPtr = 0;
@@ -342,7 +363,7 @@ void loop() {
     }
   }
   
-   // TODO: CONSIDER TIMER CONTROL
+  // TODO: CONSIDER TIMER CONTROL
   // Periodic display update (if needed)
   if (displayDirty && millis() > lastDisplayStamp + 100) {
     lastDisplayStamp = millis();    
@@ -350,7 +371,7 @@ void loop() {
     updateDisplay();
   }
 
-  // Sample the encoder and de-bounce the result
+  // Sample the encoder 
   int16_t value = encoder.getValue();
   ClickEncoder::Button button = encoder.getButton();
 
@@ -364,6 +385,7 @@ void loop() {
         setFreq(f);
       }
     } else if (subMode == 1) {
+      // Adjust the step
       if (value != 0) {
         int newIndex = (int)freqStepIndex - value;
         if (newIndex < 0) {
