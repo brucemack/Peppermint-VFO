@@ -72,9 +72,12 @@ void serviceCb() {
   encoder.service();
 }
 
+long agc = 0;
+
 void setup() {
 
   pinMode(13,OUTPUT);
+  pinMode(5,INPUT_PULLUP);
   
   Serial.begin(9600);
  
@@ -117,9 +120,7 @@ void updateDisplay() {
   // Top line - logo and mode
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("KC1FSZ VFO 5");
-  display.setCursor(100,0);
-  display.print(modeMenuText[mode]);
+  display.print("KC1FSZ VFO 6");
 
   if (mode == 0) { 
 
@@ -134,15 +135,29 @@ void updateDisplay() {
 
     // Show the marker
     if (subMode == 0) {
+      
+      display.setCursor(100,0);
+      display.print("VFO");
+
       display.drawPixel(0,20,WHITE);
       display.drawPixel(0,21,WHITE);
       display.drawPixel(0,22,WHITE);
       display.drawPixel(0,23,WHITE);
-    } else if (subMode == 1) {
+    } 
+    else if (subMode == 1) {
+
+      display.setCursor(100,0);
+      display.print("STEP");
+
       display.drawPixel(0,43,WHITE);
       display.drawPixel(0,44,WHITE);
       display.drawPixel(0,45,WHITE);
       display.drawPixel(0,46,WHITE);
+    }
+    else if (subMode == 2) {
+
+      display.setCursor(100,0);
+      display.print("SCAN");
     }
   }
   else if (mode == 1) {
@@ -169,7 +184,12 @@ void updateDisplay() {
       display.drawPixel(0,46,WHITE);
     }
   }
-     
+
+    // Third line 
+    display.setTextSize(1);
+    display.setCursor(5,53);
+    display.print(agc);
+    
   display.display();
 }
 
@@ -341,10 +361,13 @@ void loop() {
       processCATCommand(cmdBuf);
     }
   }
+
+  agc = analogRead(0);
   
-   // TODO: CONSIDER TIMER CONTROL
+  // TODO: CONSIDER TIMER CONTROL
   // Periodic display update (if needed)
-  if (displayDirty && millis() > lastDisplayStamp + 100) {
+  if (millis() > lastDisplayStamp + 1000 ||
+      displayDirty && millis() > lastDisplayStamp + 100) {
     lastDisplayStamp = millis();    
     displayDirty = false;
     updateDisplay();
@@ -379,6 +402,8 @@ void loop() {
     if (button == 5) {
       if (subMode == 0) {
         subMode = 1;
+      } else if (subMode == 1) {
+        subMode = 2;
       } else {
         subMode = 0;
       }
