@@ -65,6 +65,7 @@ const char* modeMenuText[] = {
 
 // 40m band limitations
 const unsigned long minDisplayFreq = 7000000L;
+const unsigned long minDisplayFreqA = 7125000L;
 const unsigned long maxDisplayFreq = 7300000L;
 
 // The frequency that is displayed 
@@ -88,7 +89,7 @@ int scanMode = 0;
 // This is the last time we made a scan jump
 long lastScanStamp = 0;
 // This controls how fast we scan
-long scanDelayMs = 200;
+long scanDelayMs = 150;
 
 long lastSerialReadStamp = 0;
 byte cmdBuf[5];
@@ -158,15 +159,15 @@ void updateDisplay() {
   display.setCursor(0,0);
   display.print("KC1FSZ VFO");
 
-  // Render the mode
-  display.setCursor(100,0);
-  display.print(modeMenuText[mode]);
-
   if (mode == 0) { 
 
     if (scanMode != 0) {
       display.setCursor(100,0);
       display.print("SCAN");
+    } else {
+      // Render the mode
+      display.setCursor(100,0);
+      display.print(modeMenuText[mode]);
     }
 
     // Frequency line 
@@ -194,6 +195,10 @@ void updateDisplay() {
   }
 
   else if (mode == 1) {
+
+    // Render the mode
+    display.setCursor(100,0);
+    display.print(modeMenuText[mode]);
 
     // Adjustment line
     display.setTextSize(2);
@@ -532,7 +537,7 @@ void loop() {
       (unsigned long long)scanMode * freqStepMenu[freqStepIndex];
     // Look for wrap-around
     if (f > maxDisplayFreq) {
-      f = minDisplayFreq;
+      f = minDisplayFreqA;
     }
     setFreq(f);
   }
