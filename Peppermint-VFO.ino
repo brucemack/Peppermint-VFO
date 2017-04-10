@@ -1,5 +1,5 @@
 // The Peppermint Bark BITX40 VFO
-// Bruce MacKinnon KC1FSZ 22-March-2017
+// Bruce MacKinnon KC1FSZ 10-April-2017
 // See https://www.qrz.com/db/KC1FSZ
 //
 // This code allows the radio to emulate an FT-817.  I chose this radio 
@@ -18,6 +18,7 @@
 #define ENCODER_LEFT 3
 #define ENCODER_RIGHT 2
 #define ENCODER_PUSH 4
+#define FUNCTION_BUTTON 5
 
 // Connection to OLED controller
 Adafruit_SSD1306 display(4);
@@ -62,11 +63,15 @@ const char* modeMenuText[] = {
   "CAL"
 };
 
+// 40m band limitations
+const unsigned long minDisplayFreq = 7000000L;
+const unsigned long maxDisplayFreq = 7300000L;
+
 // The frequency that is displayed 
 unsigned long displayFreq = 7200000L;
 // The IF frequency 
 const unsigned long ifFreq = 12000000L;
-// The adjustment (calibration)
+// The adjustment (calibration - your number will differ)
 unsigned long adjFreq = 1600L;
 // Menu mode
 unsigned int mode = 0;
@@ -77,9 +82,24 @@ unsigned long lastDisplayStamp = 0;
 // NOT IMPLEMENTED YET
 bool keyed = false;
 
+// Scanning related.
+// This controls the mode: 0 means not scanning, +1 means scan up, -1 means scan down
+int scanMode = 0;
+// This is the last time we made a scan jump
+long lastScanStamp = 0;
+// This controls how fast we scan
+long scanDelayMs = 200;
+
 long lastSerialReadStamp = 0;
 byte cmdBuf[5];
 int cmdBufPtr = 0;
+
+// AGC related
+long agc = 0;
+// This is the last time we sampled the AGC
+long lastAgcStamp = 0;
+// This controls how often we check the AGC level
+long agcDelayMs = 1000;
 
 // This is used by the hardware timer to manage timing of the rotary 
 // encoder.
@@ -87,13 +107,12 @@ void serviceCb() {
   encoder.service();
 }
 
-long agc = 0;
-
 void setup() {
 
   // Diagnostic LED
   pinMode(13,OUTPUT);
-  pinMode(5,INPUT_PULLUP);
+  // Function button
+  pinMode(FUNCTION_BUTTON,INPUT_PULLUP);
   
   Serial.begin(9600);
  
@@ -137,9 +156,18 @@ void updateDisplay() {
   // Top line - logo and mode
   display.setTextSize(1);
   display.setCursor(0,0);
-  display.print("KC1FSZ VFO 6");
+  display.print("KC1FSZ VFO");
+
+  // Render the mode
+  display.setCursor(100,0);
+  display.print(modeMenuText[mode]);
 
   if (mode == 0) { 
+
+    if (scanMode != 0) {
+      display.setCursor(100,0);
+      display.print("SCAN");
+    }
 
     // Frequency line 
     display.setTextSize(2);
@@ -152,31 +180,19 @@ void updateDisplay() {
 
     // Show the marker
     if (subMode == 0) {
-      
-      display.setCursor(100,0);
-      display.print("VFO");
-
       display.drawPixel(0,20,WHITE);
       display.drawPixel(0,21,WHITE);
       display.drawPixel(0,22,WHITE);
       display.drawPixel(0,23,WHITE);
     } 
     else if (subMode == 1) {
-
-      display.setCursor(100,0);
-      display.print("STEP");
-
       display.drawPixel(0,43,WHITE);
       display.drawPixel(0,44,WHITE);
       display.drawPixel(0,45,WHITE);
       display.drawPixel(0,46,WHITE);
     }
-    else if (subMode == 2) {
-
-      display.setCursor(100,0);
-      display.print("SCAN");
-    }
   }
+
   else if (mode == 1) {
 
     // Adjustment line
@@ -208,6 +224,17 @@ void updateDisplay() {
     display.print(agc);
     
   display.display();
+}
+
+// Takes a frequency and limits it to the band
+unsigned long limitFreq(unsigned long f) {
+  if (f < minDisplayFreq) {
+    return minDisplayFreq;
+  } else if (f > maxDisplayFreq) {
+    return maxDisplayFreq;
+  } else {
+    return f;
+  }
 }
 
 // This function sets (and remembers) the VFO frequency
@@ -383,34 +410,50 @@ void loop() {
     }
   }
 
-  agc = analogRead(0);
+  // Service the AGC if necessary
+  if (millis() > lastAgcStamp + agcDelayMs) {      
+    // Read the AGC line
+    agc = analogRead(0) / 10;
+    // Reset the timer
+    lastAgcStamp = millis();
+    displayDirty = true;
+  }
   
   // TODO: CONSIDER TIMER CONTROL
   // Periodic display update (if needed)
-  if (millis() > lastDisplayStamp + 1000 ||
-      displayDirty && millis() > lastDisplayStamp + 100) {
+  if (displayDirty && millis() > lastDisplayStamp + 100) {
     lastDisplayStamp = millis();    
     displayDirty = false;
     updateDisplay();
   }
 
   // Sample the encoder 
-  int16_t value = encoder.getValue();
-  ClickEncoder::Button button = encoder.getButton();
+  int16_t encoderValue = encoder.getValue();
+  ClickEncoder::Button encoderButton = encoder.getButton();
+  // Sample the mode button
+  int button5 = digitalRead(FUNCTION_BUTTON);
 
   if (mode == 0) {
-    
     if (subMode == 0) {
-      // Adjust the frequency by the selected step size
-      if (value != 0) {
-        unsigned long f = displayFreq -
-          (unsigned long long)value * freqStepMenu[freqStepIndex];
+      // If the encoder was turned 
+      if (encoderValue != 0) {
+        unsigned long f = limitFreq(displayFreq -
+          (unsigned long long)encoderValue * freqStepMenu[freqStepIndex]);
         setFreq(f);
+        // If we are in scan mode then kick out of it immediately
+        scanMode = 0;
+      }
+      // No encoder value 
+      else {
+        // If the function button is pressed then enter scan mode
+        if (button5 == LOW) {
+          scanMode = 1;
+        }
       }
     } else if (subMode == 1) {
       // Adjust the step
-      if (value != 0) {
-        int newIndex = (int)freqStepIndex - value;
+      if (encoderValue != 0) {
+        int newIndex = (int)freqStepIndex - encoderValue;
         if (newIndex < 0) {
           newIndex = 0;
         } else if ((unsigned int)newIndex >= freqStepMenuSize) {
@@ -421,7 +464,7 @@ void loop() {
       }    
     }
   
-    if (button == 5) {
+    if (encoderButton == 5) {
       if (subMode == 0) {
         subMode = 1;
       } else if (subMode == 1) {
@@ -430,7 +473,7 @@ void loop() {
         subMode = 0;
       }
       displayDirty = true;
-    } else if (button == 6) {
+    } else if (encoderButton == 6) {
       mode++;
       if (mode >= modeMenuSize) {
         mode = 0;
@@ -443,13 +486,13 @@ void loop() {
     
     if (subMode == 0) {
       // Adjust the frequency by the selected step size
-      if (value != 0) {
-        adjFreq -= (unsigned long long)value * freqStepMenu[freqStepIndex];
+      if (encoderValue != 0) {
+        adjFreq -= (unsigned long long)encoderValue * freqStepMenu[freqStepIndex];
         setFreq(displayFreq);
       }
     } else if (subMode == 1) {
-      if (value != 0) {
-        int newIndex = (int)freqStepIndex - value;
+      if (encoderValue != 0) {
+        int newIndex = (int)freqStepIndex - encoderValue;
         if (newIndex < 0) {
           newIndex = 0;
         } else if ((unsigned int)newIndex >= freqStepMenuSize) {
@@ -460,14 +503,14 @@ void loop() {
       }    
     }
   
-    if (button == 5) {
+    if (encoderButton == 5) {
       if (subMode == 0) {
         subMode = 1;
       } else {
         subMode = 0;
       }
       displayDirty = true;
-    } else if (button == 6) {
+    } else if (encoderButton == 6) {
       mode++;
       if (mode >= modeMenuSize) {
         mode = 0;
@@ -475,5 +518,23 @@ void loop() {
       displayDirty = true;
     }
   } 
+
+  // Handle scanning.  If we are in VFO mode and scanning is enabled and the scan interval
+  // has expired then step the VFO frequency.
+  //  
+  if (mode == 0 &&
+      scanMode != 0 && 
+      millis() > (lastScanStamp + scanDelayMs)) {
+    // Record the time so that we can start another cycle
+    lastScanStamp = millis();
+    // Bump the frequency by the configured step
+    unsigned long f = displayFreq +
+      (unsigned long long)scanMode * freqStepMenu[freqStepIndex];
+    // Look for wrap-around
+    if (f > maxDisplayFreq) {
+      f = minDisplayFreq;
+    }
+    setFreq(f);
+  }
 }
 
