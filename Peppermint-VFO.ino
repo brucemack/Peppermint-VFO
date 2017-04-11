@@ -56,11 +56,12 @@ unsigned int freqStepIndex = 3;
 
 // ----- MODES ---------------------------------------------------------------
 
-const unsigned int modeMenuSize = 2;
+const unsigned int modeMenuSize = 3;
 
 const char* modeMenuText[] = {
   "VFO",
-  "CAL"
+  "CAL",
+  "AGC"
 };
 
 // 40m band limitations
@@ -95,6 +96,7 @@ long lastSerialReadStamp = 0;
 byte cmdBuf[5];
 int cmdBufPtr = 0;
 
+int vol = 0;
 // AGC related
 long agc = 0;
 // This is the last time we sampled the AGC
@@ -129,6 +131,8 @@ void setup() {
 
   // Initial setting
   setFreq(7200000L);
+
+  analogWrite(A14,0);
 }
 
 // Draws the frequency line on the display
@@ -223,10 +227,20 @@ void updateDisplay() {
     }
   }
 
-    // Third line 
-    display.setTextSize(1);
-    display.setCursor(5,53);
-    display.print(agc);
+  else if (mode == 2) { 
+    // Render the mode
+    display.setCursor(100,0);
+    display.print(modeMenuText[mode]);
+    // Adjustment line
+    display.setTextSize(2);
+    display.setCursor(10,20);
+    display.print(vol);
+  }
+  
+  // Third line (AGC)
+  display.setTextSize(1);
+  display.setCursor(5,53);
+  display.print(agc);
     
   display.display();
 }
@@ -523,7 +537,23 @@ void loop() {
       displayDirty = true;
     }
   } 
-
+  
+  else if (mode == 2) {
+    // If the encoder was turned 
+    if (encoderValue != 0) {
+      vol -= encoderValue;
+      analogWrite(A14,vol);
+      displayDirty = true;
+    }    
+    if (encoderButton == 6) {
+      mode++;
+      if (mode >= modeMenuSize) {
+        mode = 0;
+      }
+      displayDirty = true;
+    }
+  }
+  
   // Handle scanning.  If we are in VFO mode and scanning is enabled and the scan interval
   // has expired then step the VFO frequency.
   //  
