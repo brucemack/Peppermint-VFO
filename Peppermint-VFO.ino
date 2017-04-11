@@ -242,7 +242,7 @@ void updateDisplay() {
   display.setCursor(0,53);
   display.print(agc);
 
-  display.fillRect(10,54,agc * 3,5,WHITE);
+  display.fillRect(12,54,agc * 2.5,5,WHITE);
   
   display.display();
 }
