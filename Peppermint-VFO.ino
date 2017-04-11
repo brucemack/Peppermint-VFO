@@ -239,9 +239,11 @@ void updateDisplay() {
   
   // Third line (AGC)
   display.setTextSize(1);
-  display.setCursor(5,53);
+  display.setCursor(0,53);
   display.print(agc);
-    
+
+  display.fillRect(10,54,agc * 3,5,WHITE);
+  
   display.display();
 }
 
