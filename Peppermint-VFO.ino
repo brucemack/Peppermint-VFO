@@ -26,6 +26,8 @@ Adafruit_SSD1306 display(4);
 Si5351 si5351;
 // Connection to rotary encoder
 ClickEncoder encoder(ENCODER_LEFT,ENCODER_RIGHT,ENCODER_PUSH,4);
+// Which si5351 clock we are using
+#define VFO_CLOCK SI5351_CLK2
 
 // ----- FREQUENCY STEP MENU ---------------------------------------------------------------
 
@@ -68,6 +70,9 @@ const char* modeMenuText[] = {
 const unsigned long minDisplayFreq = 7000000L;
 const unsigned long minDisplayFreqA = 7125000L;
 const unsigned long maxDisplayFreq = 7300000L;
+
+// Calibration (parts per billion)
+long correction = 58150;
 
 // The frequency that is displayed 
 unsigned long displayFreq = 7200000L;
@@ -119,20 +124,34 @@ void setup() {
   
   Serial.begin(9600);
  
-  si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0);
-  si5351.set_pll(SI5351_PLL_FIXED, SI5351_PLLA);  
+  si5351.init(SI5351_CRYSTAL_LOAD_8PF,0,correction);
+  // Per docs, 10dbm into 50ohms
+  si5351.drive_strength(VFO_CLOCK,SI5351_DRIVE_8MA);
 
   // Initialize with the I2C addr (for the 128x64)
-  display.begin(SSD1306_SWITCHCAPVCC,0x3C);
+  display.begin(SSD1306_SWITCHCAPVCC,0x3c);
   display.clearDisplay();
 
   Timer1.initialize(1000);
   Timer1.attachInterrupt(serviceCb); 
 
   // Initial setting
-  setFreq(7200000L);
+  setFreq(7150000L);
 
   analogWrite(A14,0);
+
+  //si5351.update_status();
+  //delay(300);
+  //Serial.print("SYS_INIT: ");
+  //Serial.print(si5351.dev_status.SYS_INIT);
+  //Serial.print("  LOL_A: ");
+  //Serial.print(si5351.dev_status.LOL_A);
+  //Serial.print("  LOL_B: ");
+  //Serial.print(si5351.dev_status.LOL_B);
+  //Serial.print("  LOS: ");
+  //Serial.print(si5351.dev_status.LOS);
+  //Serial.print("  REVID: ");
+  //Serial.println(si5351.dev_status.REVID);  
 }
 
 // Draws the frequency line on the display
@@ -145,10 +164,10 @@ void updateDisplayFreq(unsigned long freq) {
   display.setCursor(10,20);
   display.print(f0);
   display.setCursor(30,20);
-  sprintf(buf,"%03d",f1);
+  sprintf(buf,"%03lu",f1);
   display.print(buf);
   display.setCursor(70,20);
-  sprintf(buf,"%03d",f2);  
+  sprintf(buf,"%03lu",f2);  
   display.print(buf);
 }
 
@@ -262,7 +281,7 @@ unsigned long limitFreq(unsigned long f) {
 void setFreq(unsigned long freq) {
   displayFreq = freq;
   unsigned long a = ifFreq - (displayFreq + adjFreq);
-  si5351.set_freq(a * 100,SI5351_PLL_FIXED, SI5351_CLK0);
+  si5351.set_freq(a * 100,VFO_CLOCK);
   displayDirty = true;  
 }
 
